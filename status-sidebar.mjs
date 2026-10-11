@@ -91,7 +91,20 @@ function resolveModelsCachePath() {
   return path.join(os.homedir(), ".cache", "opencode", "models.json");
 }
 
-const OPENCODE_DB_PATH = path.join(os.homedir(), ".local/share/opencode/opencode.db");
+function resolveOpencodeDbPath() {
+  const candidates = [
+    process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, "opencode", "opencode.db") : null,
+    "D:/.local/share/opencode/opencode.db",
+    path.join(os.homedir(), ".local/share/opencode/opencode.db"),
+    path.join(os.homedir(), ".local", "share", "opencode", "opencode.db"),
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) return c;
+  }
+  return path.join(os.homedir(), ".local/share/opencode/opencode.db");
+}
+
+const OPENCODE_DB_PATH = resolveOpencodeDbPath();
 const MODELS_CACHE_PATH = resolveModelsCachePath();
 const ENGRAM_DB_PATH = resolveEngramDbPath();
 
@@ -317,8 +330,18 @@ function resolveModelContextLimit(modelId, providerId = null) {
 // PROVEEDORES DE DATOS NATIVOS
 // ============================================================================
 
-// 1. Git Status & Log Graph (Sintaxis Dracula)
-function getGitData(targetDir) {
+// 1. Git Status & Log Graph (Sintaxis Dracula) con Cache de 10s para evitar bloquear el event loop
+let cachedGitData = null;
+let cachedGitDir = null;
+let cachedGitTime = 0;
+const GIT_CACHE_TTL_MS = 10_000;
+
+function getGitData(targetDir, force = false) {
+  const now = Date.now();
+  if (!force && cachedGitData && cachedGitDir === targetDir && now - cachedGitTime < GIT_CACHE_TTL_MS) {
+    return cachedGitData;
+  }
+
   try {
     const branch = execSync("git rev-parse --abbrev-ref HEAD", {
       cwd: targetDir,
@@ -379,7 +402,7 @@ function getGitData(targetDir) {
       }
     } catch {}
 
-    return {
+    const res = {
       branch,
       modified,
       untracked,
@@ -390,8 +413,12 @@ function getGitData(targetDir) {
       isClean: modified === 0 && untracked === 0 && staged === 0,
       hasGit: true,
     };
+    cachedGitData = res;
+    cachedGitDir = targetDir;
+    cachedGitTime = now;
+    return res;
   } catch {
-    return {
+    const fallback = {
       branch: "main",
       modified: 0,
       untracked: 0,
@@ -402,6 +429,10 @@ function getGitData(targetDir) {
       isClean: true,
       hasGit: false,
     };
+    cachedGitData = fallback;
+    cachedGitDir = targetDir;
+    cachedGitTime = now;
+    return fallback;
   }
 }
 
@@ -583,6 +614,43 @@ function extractAccountPrefix(agentStr, modelStr) {
   return null;
 }
 
+// Cache para consultas de panes de Herdr (reduce execSync masivo en cada render/ciclo)
+let cachedHerdrPanes = null;
+let cachedHerdrTime = 0;
+const HERDR_CACHE_TTL_MS = 2_500;
+
+function getHerdrPanesData(force = false) {
+  const now = Date.now();
+  if (!force && cachedHerdrPanes && now - cachedHerdrTime < HERDR_CACHE_TTL_MS) {
+    return cachedHerdrPanes;
+  }
+  try {
+    const listRaw = execSync("herdr pane list", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const listData = JSON.parse(listRaw);
+    const panes = listData.result?.panes || [];
+    let myPaneId = process.env.HERDR_PANE_ID || null;
+    let myTabId = null;
+
+    if (!myPaneId) {
+      try {
+        const curRaw = execSync("herdr pane current", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+        const curData = JSON.parse(curRaw);
+        myPaneId = curData.result?.pane?.pane_id;
+        myTabId = curData.result?.pane?.tab_id;
+      } catch {}
+    } else {
+      const myPane = panes.find((p) => p.pane_id === myPaneId);
+      myTabId = myPane?.tab_id;
+    }
+
+    cachedHerdrPanes = { panes, myPaneId, myTabId };
+    cachedHerdrTime = now;
+    return cachedHerdrPanes;
+  } catch {
+    return { panes: [], myPaneId: null, myTabId: null };
+  }
+}
+
 // 2. OpenCode Session, Context, Multi-Pane Herdr & Tool Telemetry
 function getOpenCodeSessionData() {
   const result = {
@@ -613,24 +681,7 @@ function getOpenCodeSessionData() {
 
     // A. Consultamos el mapa en vivo de Herdr para descubrir todos los panes activos
     try {
-      const listRaw = execSync("herdr pane list", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-      const listData = JSON.parse(listRaw);
-      const panes = listData.result?.panes || [];
-
-      // Identificar el tab actual de este sidebar
-      let myTabId = null;
-      let myPaneId = process.env.HERDR_PANE_ID;
-      if (!myPaneId) {
-        try {
-          const curRaw = execSync("herdr pane current", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-          const curData = JSON.parse(curRaw);
-          myPaneId = curData.result?.pane?.pane_id;
-          myTabId = curData.result?.pane?.tab_id;
-        } catch {}
-      } else {
-        const myPane = panes.find((p) => p.pane_id === myPaneId);
-        myTabId = myPane?.tab_id;
-      }
+      const { panes, myPaneId, myTabId } = getHerdrPanesData();
 
       // Recolectar todas las cuentas en uso a lo largo de TODOS los panes abiertos
       for (const p of panes) {
@@ -853,6 +904,41 @@ function getSddSubagentAccountMap(orchestratorAgent, targetDir) {
   const cfg = resolveOpencodeConfig(targetDir);
   if (!cfg) return accountModelMap;
 
+  // 1. Si el orquestador tiene tabla explícita en su prompt/system (Gentle AI SDD standard)
+  const orchDef = (cfg.agent && cfg.agent[orchestratorAgent]) || (cfg.agents && cfg.agents[orchestratorAgent]);
+  const sysText = (orchDef?.system || orchDef?.prompt || "");
+  const tableMatch = sysText.match(/<!-- gentle-ai:sdd-model-assignments -->([\s\S]*?)<!-- \/gentle-ai:sdd-model-assignments -->/);
+
+  if (tableMatch) {
+    const lines = tableMatch[1].split("\n");
+    for (const line of lines) {
+      if (!line.includes("|")) continue;
+      const cols = line.split("|").map((c) => c.trim());
+      if (cols.length >= 3 && cols[1] && !cols[1].startsWith("Phase") && !cols[1].startsWith("---")) {
+        const phase = cols[1];
+        const modelStr = cols[2];
+        const clean = modelStr.replace(/^cliproxy\//i, "");
+        if (clean.includes("/")) {
+          const parts = clean.split("/");
+          const pfx = parts[0].toLowerCase();
+          const modelKey = parts.slice(1).join("/");
+          let family = "Otro";
+          const lowerKey = modelKey.toLowerCase();
+          if (lowerKey.includes("claude") || lowerKey.includes("opus") || lowerKey.includes("sonnet")) {
+            family = "Claude";
+          } else if (lowerKey.includes("gemini") || lowerKey.includes("flash") || lowerKey.includes("pro")) {
+            family = "Gemini";
+          } else if (lowerKey.includes("gpt") || lowerKey.includes("openai") || lowerKey.includes("oss")) {
+            family = "GPT";
+          }
+          accountModelMap.set(pfx, { family, model: modelKey, phase });
+        }
+      }
+    }
+    if (accountModelMap.size > 0) return accountModelMap;
+  }
+
+  // 2. Mapeo por sufijo de subagentes en opencode.json
   const m = orchestratorAgent.match(/sdd-orchestrator-(.+)/i);
   const profile = m ? m[1].toLowerCase() : "";
 
@@ -982,14 +1068,22 @@ function discoverAccounts() {
     (f) => f.startsWith("antigravity-") && f.endsWith(".json")
   );
 
+  const seenAuthFiles = new Set();
+
   for (const file of files) {
     try {
-      const raw = fs.readFileSync(path.join(AUTHS_DIR, file), "utf8");
+      const authFilePath = path.join(AUTHS_DIR, file);
+      seenAuthFiles.add(authFilePath);
+      const raw = fs.readFileSync(authFilePath, "utf8");
       const auth = JSON.parse(raw);
       const prefix = auth.prefix || (auth.email ? auth.email.split("@")[0] : file);
 
-      const authFilePath = path.join(AUTHS_DIR, file);
-      let existing = accountsList.find((a) => a.prefix === prefix);
+      // Buscar por archivo primero (evita duplicar si cambió el prefijo en disco)
+      let existing = accountsList.find((a) => a.authFile === authFilePath);
+      if (!existing) {
+        existing = accountsList.find((a) => a.prefix === prefix);
+      }
+
       if (!existing) {
         existing = {
           prefix,
@@ -1006,10 +1100,19 @@ function discoverAccounts() {
         };
         accountsList.push(existing);
       } else {
+        existing.prefix = prefix;
         existing.auth = auth;
         existing.authFile = authFilePath;
+        existing.email = auth.email || "";
       }
     } catch {}
+  }
+
+  // Purgar cuentas huérfanas cuyos archivos ya no existen o cambiaron
+  for (let i = accountsList.length - 1; i >= 0; i--) {
+    if (!seenAuthFiles.has(accountsList[i].authFile)) {
+      accountsList.splice(i, 1);
+    }
   }
 
   accountsList.sort((a, b) => a.prefix.localeCompare(b.prefix));
@@ -1221,19 +1324,11 @@ function releaseInactiveSessions() {
   const engramProject = path.basename(sessionData.activeDirectory || process.cwd()).toLowerCase();
 
   try {
-    const listRaw = execSync("herdr pane list", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const listData = JSON.parse(listRaw);
-    const panes = listData.result?.panes || [];
+    const { panes, myPaneId, myTabId } = getHerdrPanesData(true);
 
     // Descubrir qué pane / tab es el que tiene el foco activo del usuario
-    let focusedTabId = null;
-    let focusedPaneId = null;
-    try {
-      const curRaw = execSync("herdr pane current", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-      const curData = JSON.parse(curRaw);
-      focusedPaneId = curData.result?.pane?.pane_id;
-      focusedTabId = curData.result?.pane?.tab_id;
-    } catch {}
+    let focusedTabId = myTabId;
+    let focusedPaneId = myPaneId;
 
     const focusedPane = panes.find((p) => p.focused || (focusedPaneId && p.pane_id === focusedPaneId));
     const activeTabId = focusedPane?.tab_id || focusedTabId;
@@ -1331,9 +1426,7 @@ function executeDatabaseMigration(targetPrefix) {
 
     // De los panes activos de Herdr (incluso si fueron marcadas como archived en DB por un cierre previo)
     try {
-      const listRaw = execSync("herdr pane list", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-      const listData = JSON.parse(listRaw);
-      const panes = listData.result?.panes || [];
+      const { panes } = getHerdrPanesData(true);
       for (const p of panes) {
         const sesId = p.agent_session?.value;
         if (sesId && !activeSessionsMap.has(sesId)) {
@@ -1824,15 +1917,16 @@ function render() {
   // Detects whether the active agent in this workspace/pane is a multi-model distributed SDD
   // or a dedicated single-account SDD / general session.
   const localPrefix = extractAccountPrefix(opencode.agent, opencode.model);
-  const isSddAgent = (opencode.agent || "").toLowerCase().includes("sdd");
+  const isSddAgent = (opencode.agent || "").toLowerCase().includes("sdd") || (opencode.agent || "").toLowerCase().includes("gentle");
+  const subagentMap = isSddAgent ? getSddSubagentAccountMap(opencode.agent, targetDir) : new Map();
   const isMultiModelSDD =
     /claude|multi|hybrid|distrib/i.test(opencode.agent || "") ||
+    subagentMap.size > 1 ||
     (!localPrefix && isSddAgent);
 
   if (isMultiModelSDD) {
     // ESCENARIO 1: SDD Multi-Modelo / Distribuido (Batería de cuentas consolidada)
     // Detecta qué modelo y familia corre en cada cuenta según el mapeo de subagentes en opencode.json
-    const subagentMap = getSddSubagentAccountMap(opencode.agent, targetDir);
     const agentModelStr = `${opencode.agent || ""} ${opencode.model || ""}`.toLowerCase();
     const fallbackFamily = agentModelStr.includes("claude") ? "Claude" : (agentModelStr.includes("gemini") ? "Gemini" : "Claude");
 
@@ -2070,7 +2164,10 @@ function render() {
 
   const visibleLines = lines.slice(scrollOffset, scrollOffset + maxVisibleRows);
 
-  process.stdout.write(`\x1b[H\x1b[J${visibleLines.join("\n")}\n`);
+  // Reposicionar el cursor al inicio (0,0) sin borrar toda la pantalla (\x1b[J) para evitar parpadeos (flicker-free).
+  // Se usa \x1b[K en cada renglón para limpiar cualquier residuo anterior de línea.
+  const formattedOutput = visibleLines.map((l) => `${l}\x1b[K`).join("\n");
+  process.stdout.write(`\x1b[H${formattedOutput}\n\x1b[J`);
 }
 
 // ============================================================================

@@ -131,6 +131,7 @@ export async function syncIntegrationsAndOrchestrators() {
 
   // 2. Auditar y auto-asignar modelos faltantes a los orquestadores SDD
   let repairedOrchestratorsCount = 0;
+  let createdOrchestratorsCount = 0;
 
   // Soportar tanto "agent" como "agents" para compatibilidad con V1, V2 y Gentle AI
   const agentSections = [];
@@ -141,7 +142,75 @@ export async function syncIntegrationsAndOrchestrators() {
   const knownAccountPrefixes = new Set();
   for (const mId of Object.keys(modelsMap)) {
     if (mId.includes("/")) {
-      knownAccountPrefixes.add(mId.split("/")[0]);
+      const pfx = mId.split("/")[0].toLowerCase();
+      if (pfx !== "cliproxy" && pfx !== "opencode") {
+        knownAccountPrefixes.add(pfx);
+      }
+    }
+  }
+
+  // 2.1 Auto-crear orquestadores y subagentes SDD faltantes para cuentas detectadas (ej: nina)
+  const templateOrch = (rawConfig.agents && rawConfig.agents["sdd-orchestrator-gianni"])
+    || (rawConfig.agent && rawConfig.agent["sdd-orchestrator-gianni"]);
+
+  if (templateOrch) {
+    const sddPhases = [
+      { name: "init", desc: "Bootstrap SDD context and project configuration" },
+      { name: "explore", desc: "Investigate codebase and think through ideas" },
+      { name: "research", desc: "Collect auditable external evidence" },
+      { name: "propose", desc: "Create change proposals from explorations" },
+      { name: "spec", desc: "Write detailed specifications from proposals" },
+      { name: "design", desc: "Create technical design from proposals" },
+      { name: "tasks", desc: "Break down specs and designs into implementation tasks" },
+      { name: "apply", desc: "Implement code changes from task definitions" },
+      { name: "verify", desc: "Validate implementation against specs" },
+      { name: "archive", desc: "Archive completed change artifacts" },
+      { name: "onboard", desc: "Guide user through a complete SDD cycle using their real codebase" }
+    ];
+
+    for (const prefix of knownAccountPrefixes) {
+      const targetModel = `cliproxy/${prefix}/gemini-3.8-flash-high`;
+      if (!modelsMap[`${prefix}/gemini-3.8-flash-high`]) continue;
+
+      for (const section of agentSections) {
+        // Crear subagentes faltantes
+        for (const phase of sddPhases) {
+          const subAgentName = `sdd-${phase.name}-${prefix}`;
+          if (!section[subAgentName]) {
+            section[subAgentName] = {
+              description: phase.desc,
+              hidden: true,
+              mode: "subagent",
+              model: targetModel,
+              system: `{file:C:/Users/Gustavo/.config/opencode/prompts/sdd/sdd-${phase.name}.md}`
+            };
+          }
+        }
+
+        // Crear orquestador si no existe
+        const orchName = `sdd-orchestrator-${prefix}`;
+        if (!section[orchName]) {
+          const newPermissions = (templateOrch.permissions || []).map((perm) => {
+            if (typeof perm.resource === "string" && perm.resource.includes("gianni")) {
+              return { ...perm, resource: perm.resource.replace(/gianni/g, prefix) };
+            }
+            return { ...perm };
+          });
+
+          let newSystem = typeof templateOrch.system === "string"
+            ? templateOrch.system.replace(/gianni/g, prefix)
+            : "";
+
+          section[orchName] = {
+            description: `SDD Orchestrator (${prefix} profile) - coordinates sub-agents, never does work inline`,
+            mode: "primary",
+            model: targetModel,
+            permissions: newPermissions,
+            system: newSystem
+          };
+          createdOrchestratorsCount++;
+        }
+      }
     }
   }
 
@@ -224,7 +293,8 @@ export async function syncIntegrationsAndOrchestrators() {
   return {
     totalModels: Object.keys(sortedModels).length,
     addedModels: addedModelsCount,
-    repairedOrchestrators: repairedOrchestratorsCount
+    repairedOrchestrators: repairedOrchestratorsCount,
+    createdOrchestrators: createdOrchestratorsCount
   };
 }
 
