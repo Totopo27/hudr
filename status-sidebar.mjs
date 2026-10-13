@@ -1093,6 +1093,9 @@ function discoverAccounts() {
           rem5h: 100,
           used5h: 0,
           reset5h: "",
+          remWk: 100,
+          usedWk: 0,
+          resetWk: "",
           isCritical: false,
           isWarning: false,
           hasError: false,
@@ -1163,9 +1166,13 @@ async function updateAccountQuota(account) {
       account.used5h = usedPercent;
       account.reset5h = formatRelativeReset(gemini5h?.resetTime || null);
 
-      const gemWkPct = Math.round(((geminiWk?.remainingFraction ?? 1) * 100));
+      const gemWkPct = Math.max(0, Math.min(100, Math.round(((geminiWk?.remainingFraction ?? 1) * 100))));
       const claudeWkPct = Math.round(((claudeWk?.remainingFraction ?? 1) * 100));
       const claude5hPct = Math.round(((claude5h?.remainingFraction ?? 1) * 100));
+
+      account.remWk = gemWkPct;
+      account.usedWk = 100 - gemWkPct;
+      account.resetWk = formatRelativeReset(geminiWk?.resetTime || null);
 
       account.pools = [
         {
@@ -1842,9 +1849,23 @@ function render() {
         const isActive = activePrefixes.has(acc.prefix.toLowerCase());
         let pctColor = MINT;
         let statusGlyph = isActive ? `${ACCENT_PINK}>${RESET}` : `${MINT}●${RESET}`;
-        let statusNote = acc.reset5h ? `${TEXT_DIM}${acc.reset5h}${RESET}` : "";
 
-        const showTimerPhase = Boolean(acc.reset5h) && Math.floor(Date.now() / 3000) % 2 === 1;
+        const wkPct = acc.remWk ?? 100;
+        let wkWarnColor = MINT;
+        if (wkPct <= 15) {
+          wkWarnColor = CORAL;
+        } else if (wkPct <= 30) {
+          wkWarnColor = AMBER;
+        }
+
+        // Timer y rotación de notas
+        const timeNotePhase = Math.floor(Date.now() / 3000) % 2;
+        let timeNote = acc.reset5h ? `${TEXT_DIM}${acc.reset5h}${RESET}` : "";
+        if (acc.resetWk && timeNotePhase === 1) {
+          timeNote = `${TEXT_DIM}Wk:${acc.resetWk}${RESET}`;
+        }
+
+        let statusNote = timeNote;
 
         if (acc.hasError) {
           statusGlyph = `${AMBER}?${RESET}`;
@@ -1853,13 +1874,13 @@ function render() {
         } else if (acc.isCritical) {
           statusGlyph = `${BOLD}${CORAL}!${RESET}`;
           pctColor = CORAL;
-          statusNote = showTimerPhase
+          statusNote = timeNotePhase === 1 && acc.reset5h
             ? `${TEXT_DIM}${acc.reset5h}${RESET}`
             : `${BOLD}${CORAL}[AGOTÁNDOSE]${RESET}`;
         } else if (acc.isWarning) {
           statusGlyph = `${BOLD}${AMBER}!${RESET}`;
           pctColor = AMBER;
-          statusNote = showTimerPhase
+          statusNote = timeNotePhase === 1 && acc.reset5h
             ? `${TEXT_DIM}${acc.reset5h}${RESET}`
             : `${AMBER}[AVISO 70%]${RESET}`;
         }
@@ -1868,9 +1889,15 @@ function render() {
           ? `${BOLD}${TEXT_PRIMARY}${acc.prefix.padEnd(8)}${RESET}`
           : `${TEXT_MUTED}${acc.prefix.padEnd(8)}${RESET}`;
 
-        const pctDisplay = `${BOLD}${pctColor}${String(acc.rem5h).padStart(3)}%${RESET}`;
-        const bar = renderGaugeInline(acc.rem5h, 8, pctColor);
-        const leftCol = `${statusGlyph} ${pfxDisplay} ${bar} ${pctDisplay}`;
+        const bar5h = renderGaugeInline(acc.rem5h, 4, pctColor);
+        const pct5hStr = String(acc.rem5h).padStart(3);
+        const pct5hDisplay = `${BOLD}${pctColor}${pct5hStr}%${RESET}`;
+
+        const barWk = renderGaugeInline(wkPct, 4, wkWarnColor);
+        const pctWkStr = String(wkPct).padStart(3);
+        const pctWkDisplay = `${BOLD}${wkWarnColor}${pctWkStr}%${RESET}`;
+
+        const leftCol = `${statusGlyph} ${pfxDisplay} ${bar5h} ${pct5hDisplay} ${TEXT_DIM}Wk${RESET} ${barWk} ${pctWkDisplay}`;
         const rightCol = statusNote;
 
         lines.push(drawRow(leftCol, rightCol));
