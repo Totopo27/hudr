@@ -833,28 +833,49 @@ function getOpenCodeSessionData() {
 function getMcpData(targetDir) {
   const mcpList = [];
   const candidatePaths = [
+    "D:/.opencode/opencode.json",
     path.join(targetDir, "opencode.json"),
     path.join(targetDir, ".opencode", "opencode.json"),
     path.join(os.homedir(), ".config", "opencode", "opencode.json"),
     path.join(os.homedir(), ".opencode", "opencode.json"),
   ];
   if (process.env.OPENCODE_CONFIG_DIR) {
-    candidatePaths.push(path.join(process.env.OPENCODE_CONFIG_DIR, "opencode.json"));
+    candidatePaths.unshift(path.join(process.env.OPENCODE_CONFIG_DIR, "opencode.json"));
   }
+
+  const registerMcp = (name, val) => {
+    if (!name || typeof name !== "string" || !val || typeof val !== "object") return;
+    const isEnabled = val?.enabled !== false;
+    const type = val?.type || (val?.url ? "remote" : "local");
+    const existing = mcpList.find((m) => m.name === name);
+    if (!existing) {
+      mcpList.push({ name, enabled: isEnabled, type });
+    }
+  };
 
   for (const p of candidatePaths) {
     if (fs.existsSync(p)) {
       try {
         const raw = fs.readFileSync(p, "utf8");
         const cfg = JSON.parse(raw);
+
+        // Standard OpenCode mcp block
         if (cfg.mcp && typeof cfg.mcp === "object") {
           for (const [name, val] of Object.entries(cfg.mcp)) {
-            if (name === "servers") continue;
-            const isEnabled = val?.enabled !== false;
-            const type = val?.type || (val?.url ? "remote" : "local");
-            if (!mcpList.some((m) => m.name === name)) {
-              mcpList.push({ name, enabled: isEnabled, type });
+            if (name === "servers" && val && typeof val === "object") {
+              for (const [sName, sVal] of Object.entries(val)) {
+                registerMcp(sName, sVal);
+              }
+            } else {
+              registerMcp(name, val);
             }
+          }
+        }
+
+        // Standard VS Code / Claude / generic mcpServers block
+        if (cfg.mcpServers && typeof cfg.mcpServers === "object") {
+          for (const [name, val] of Object.entries(cfg.mcpServers)) {
+            registerMcp(name, val);
           }
         }
       } catch {}
