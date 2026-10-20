@@ -1,4 +1,4 @@
-# Sidebar Herdr OpenCode
+# hudr (formerly Sidebar Herdr OpenCode)
 
 > High-Density Developer HUD and Live Telemetry Sidebar for Herdr and OpenCode.
 > Architected with Linear-inspired design density, zero-dependency native SQLite inspection, multi-account quota monitoring, and session lifecycle controls.
@@ -7,7 +7,7 @@
 
 ## Overview
 
-Sidebar Herdr OpenCode is an ambient terminal HUD engineered to run alongside OpenCode inside the Herdr terminal multiplexer. It splits the terminal into an integrated workspace providing real-time telemetry: active session metrics, context window token consumption gauges, Engram persistent memory status, multi-account API quotas with automated migration, recent Git history graphs, live tool call telemetry, and MCP server states.
+**hudr** is an ambient terminal HUD engineered to run alongside OpenCode inside the Herdr terminal multiplexer. It splits the terminal into an integrated workspace providing real-time telemetry: active session metrics, context window token consumption gauges, Engram persistent memory status, multi-account API quotas with automated migration, recent Git history graphs, live tool call telemetry, and MCP server states.
 
 ```text
                OPENCODE · GENTLE-AI

@@ -1,10 +1,11 @@
 {
-  "name": "sidebar-herdr-opencode",
+  "name": "hudr",
   "version": "1.0.0",
   "description": "High-density developer telemetry HUD and status sidebar for Herdr multiplexer and OpenCode",
   "main": "status-sidebar.mjs",
   "type": "module",
   "bin": {
+    "hudr": "./status-sidebar.mjs",
     "sidebar": "./status-sidebar.mjs",
     "status-sidebar": "./status-sidebar.mjs",
     "add-sidebar": "./attach-sidebar.mjs",
