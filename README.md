@@ -214,14 +214,17 @@ This sidebar is not a standalone mock; it is a cockpit operating directly on top
 
 ### Repository File Structure
 ```text
-sidebarHerdrOpencode/
-├── status-sidebar.mjs      Main TUI telemetry HUD script
+hudr/
+├── src/                    Modular Clean Architecture core
+│   ├── config.mjs          Paths, ANSI palette, constants & timeouts
+│   ├── collectors/         Telemetry collectors (git, herdr, opencode, quotas, engram, tree)
+│   ├── ui/                 Render engine, geometry primitives & ANSI formatting
+│   └── actions/            Session cleanup, hotkeys & SGR mouse dispatcher
+├── status-sidebar.mjs      CLI entry point & public façade
 ├── attach-sidebar.mjs      Split management script for Herdr (0.80/0.20 ratio)
 ├── snew.mjs                Clean session creator and handover script
 ├── sclose.mjs              Session termination and account de-allocation script
-├── status-sidebar.cmd      Windows launcher for sidebar
-├── add-sidebar.cmd         Windows launcher for split attachment
-├── sclose.cmd              Windows launcher for sclose
+├── test/                   Automated smoke test suite
 ├── package.json            Project manifest and binary definitions
 └── README.md               Technical documentation
 ```
