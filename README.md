@@ -1,7 +1,6 @@
-# hudr (formerly Sidebar Herdr OpenCode)
+# hudr
 
-> High-Density Developer HUD and Live Telemetry Sidebar for Herdr and OpenCode.
-> Architected with Linear-inspired design density, zero-dependency native SQLite inspection, multi-account quota monitoring, and session lifecycle controls.
+> HUD and Live Telemetry Sidebar for Herdr and OpenCode.
 
 ---
 
@@ -57,15 +56,6 @@
 
 ---
 
-## ¿Por qué un HUD independiente y no otra cosa?
-
-La mayoría de las herramientas de telemetría para agentes de código caen en dos recetas conocidas:
-
-1. **Extensiones integradas dentro del proceso:** Parchean la vista interna del editor y comparten su ciclo de vida. Si el agente crashea, se come la memoria o se cuelga con una excepción, la telemetría se apaga con él.
-2. **Proxies con pools ciegos:** Tratan tus credenciales como una granja anónima de tokens. El proxy cambia cuentas en la oscuridad sin saber qué archivo estás tocando, en qué pestaña de la terminal estás parado o si realmente querías quemar esa cuenta en una suite de tests de 20 minutos.
-
-Este proyecto nació porque ninguna de esas dos opciones sirve cuando trabajás con varias pestañas en paralelo y administrás un puñado de cuentas propias.
-
 ### Qué hace distinto este HUD
 
 * **Aislamiento de procesos:** El sidebar corre en su propio pane del multiplexor como un script de Node independiente. Lee `opencode.db`, `engram.db` y los archivos de autenticación directo del disco. OpenCode puede reiniciarse, caerse o quedarse sin memoria; la cabina sigue dibujando sin pestañear.
@@ -77,54 +67,6 @@ Este proyecto nació porque ninguna de esas dos opciones sirve cuando trabajás 
 
 ---
 
-## Technical Architecture & HUD Modules
-
-### 1. Estado Card
-- Displays active project root, current Git branch with working tree mutation indicators (`±N`), selected LLM model identifier and profile rating.
-- Shows active sub-vitals line: resolved Engram memory namespace, active MCP server tally, and configured account profile indicator.
-
-### 2. Contexto Gauge Card
-- Real-time token consumption tracking scaled dynamically to the active LLM context window (via `models.json` discovery).
-- Three-stage context lifecycle thresholds:
-  - **Optimal (< 50% capacity):** Mint indicator with proportional fill gauge.
-  - **Mature (50% – 79% capacity):** Amber warning indicator suggesting a clean handover via `/snew`.
-  - **Saturated (>= 80% capacity):** Coral alert indicator warning against context degradation.
-- Complete OpenCode 2 token measurement formula: `input + output + reasoning + cache.read + cache.write`.
-- Cumulative input/output token counters and estimated USD session cost.
-
-### 3. Engram Persistent Memory Card
-- Direct socket health check against the local Engram daemon (`http://127.0.0.1:7437/health`).
-- Displays total stored observations, project scoping, and private cloud synchronization status.
-
-### 4. Integraciones Card (Multi-Account Fleet Overview)
-- Comprehensive view across all configured auth profiles (`cliproxyapi/auths`).
-- **Parallel Multi-Session Detection:** Marks accounts currently bound to active unarchived OpenCode sessions across any Herdr pane with `▸`.
-- **Cascading Quota Alerts:**
-  - `[AVISO 70%]`: Amber badge triggered upon reaching 70% 5-hour rolling quota consumption.
-  - `[AGOTANDOSE]`: Coral badge triggered at 85% consumption, notifying that the account is approaching exhaustion.
-
-### 5. Active Account Pools Breakdown Card
-- Deep breakdown of the 4 quota pools for the account actively driving the current session:
-  - Gemini Weekly pool + relative reset countdown + predictive Pacing indicator (`↑N%` headroom / `↓N%` overburn).
-  - Gemini 5-hour rolling window + reset countdown + 5h Pacing indicator.
-  - Claude / Secondary model weekly pool + Pacing indicator.
-  - Claude / Secondary model 5-hour window + Pacing indicator.
-- **Predictive Quota Pacing Engine:**
-  - Evaluates consumption speed against the remaining cycle clock instead of relying on misleading static percentages:
-    $$\text{Pacing} = (\% \text{ cuota consumida}) - (\% \text{ tiempo transcurrido del ciclo})$$
-  - **`↑N%` (Mint / Verde):** Headroom a favor. Consumo holgado y sostenible respecto al tiempo restante de la ventana.
-  - **`~0%` (Dorado):** Ritmo balanceado a la par del reloj.
-  - **`↓N%` (Coral / Rojo):** Sobregiro de ritmo (Burn rate excesivo). Alerta temprana de agotamiento prematuro antes del reset.
-
-### 6. Gráfico Git Card
-- Commit tree preview rendered with branch indicators, porcelain status checks, modified/staged file counts, and net diff line totals (`+X -Y`).
-
-### 7. Herramientas Telemetry Card
-- Live invocation counters categorizing assistant tool calls into discrete domains (`lecturas`, `escrituras`, `bash`, `engram/mem`, `other`).
-
-### 8. Servidores MCP Card
-- Automatic discovery of configured Model Context Protocol servers across project, user, and global `opencode.json` configuration manifests.
-- Displays server transport type (`local` / `remote`) and operational readiness status.
 
 ---
 
@@ -162,14 +104,6 @@ When running multiple spaces or tabs in Herdr with shared API accounts, closing 
 | **`snew`** | Terminal / Herdr | **Clean Workspace Tab:** Launches a fresh Herdr tab with OpenCode on the left (80%) and HUD on the right (20%). |
 | **`sclose`** | Terminal / Herdr | **Local Archive:** Archives the active session for the current workspace directory and updates HUD state (`--close-tab` and `--close-pane` supported). |
 | **`sidebar`** | Terminal / Herdr | Attaches or connects the HUD sidebar with standard 80/20 layout ratio. |
-
-### Natural Language Session Termination Triggers
-The orchestrator recognizes the following phrases to execute the session close workflow:
-- *"damos por finalizada la sesion de hoy"*
-- *"por hoy, eso seria, finaliza la sesion"*
-- *"Quiero finalizar el uso de esta cuenta por ahora"*
-- *"Terminamos por hoy"*
-- *"finalizar sesion"*
 
 ---
 
