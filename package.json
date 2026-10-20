@@ -6,11 +6,14 @@
   "type": "module",
   "bin": {
     "sidebar": "./status-sidebar.mjs",
+    "status-sidebar": "./status-sidebar.mjs",
+    "add-sidebar": "./attach-sidebar.mjs",
     "snew": "./snew.mjs",
     "sclose": "./sclose.mjs"
   },
   "scripts": {
     "start": "node status-sidebar.mjs",
+    "test": "node test/modular-smoke.test.mjs",
     "attach": "node attach-sidebar.mjs",
     "snew": "node snew.mjs",
     "sclose": "node sclose.mjs"

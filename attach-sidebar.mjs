@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import * as path from "node:path";
 import { execSync } from "node:child_process";
 
