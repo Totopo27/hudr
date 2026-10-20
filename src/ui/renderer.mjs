@@ -32,7 +32,7 @@ import {
   renderGaugeInline,
 } from "./primitives.mjs";
 import { colorizeGitGraphLine } from "../collectors/git.mjs";
-import { resolveModelContextLimit, getSddSubagentAccountMap } from "../collectors/opencode.mjs";
+import { resolveModelContextLimit, getSddSubagentAccountMap, extractAccountPrefix } from "../collectors/opencode.mjs";
 import { getBestHealthyTargetPrefix } from "../actions/session-cleanup.mjs";
 
 export function renderScreen({
@@ -300,24 +300,32 @@ export function renderScreen({
 
   // 5B. Pools Breakdown Card: Multi-Model SDD vs. Dedicated Mono-Account SDD
   const isSddAgent = (opencode.agent || "").toLowerCase().includes("sdd") || (opencode.agent || "").toLowerCase().includes("gentle");
-  const subagentMap = isSddAgent ? getSddSubagentAccountMap(opencode.agent, targetDir) : new Map();
-  const localPrefix = opencode.allActivePrefixes?.size === 1 ? Array.from(opencode.allActivePrefixes)[0] : null;
-  const isMultiModelSDD =
-    /claude|multi|hybrid|distrib/i.test(opencode.agent || "") ||
-    subagentMap.size > 1 ||
-    (!localPrefix && isSddAgent);
+  const localPrefix = opencode.localPrefix
+    || extractAccountPrefix(opencode.agent, opencode.model, accountsList)
+    || null;
+  const subagentMap = isSddAgent ? getSddSubagentAccountMap(opencode.agent, targetDir, localPrefix) : new Map();
+  const resolvedLocalPrefix = localPrefix || (subagentMap.size === 1 ? subagentMap.keys().next().value : null);
+
+  // Multi-modelo solo cuando:
+  // 1) Hay más de una cuenta involucrada en subagentes (subagentMap.size > 1), O
+  // 2) El agente es explícitamente multi-modelo / distribuido (ej: claude-1 con múltiples cuentas o multi/hybrid/distrib)
+  // NUNCA es multi-modelo si subagentMap tiene <= 1 cuenta y la cuenta local está definida (Mono-modelo)
+  const isExplicitMulti = /claude|multi|hybrid|distrib/i.test(opencode.agent || "");
+  const isMultiModelSDD = subagentMap.size > 1 || (isExplicitMulti && !resolvedLocalPrefix);
+
+  let renderedMultiModel = false;
 
   if (isMultiModelSDD) {
-    // ESCENARIO 1: SDD Multi-Modelo / Distribuido
+    // ESCENARIO 1: SDD Multi-Modelo / Distribuido (Batería de cuentas consolidada)
     const agentModelStr = `${opencode.agent || ""} ${opencode.model || ""}`.toLowerCase();
     const fallbackFamily = agentModelStr.includes("claude") ? "Claude" : (agentModelStr.includes("gemini") ? "Gemini" : "Claude");
 
     const accountsWithPools = accountsList.filter((a) => a.pools && a.pools.length > 0);
-    const targetAccounts = subagentMap.size > 0
+    const targetAccounts = subagentMap.size > 1
       ? accountsWithPools.filter((a) => subagentMap.has(a.prefix.toLowerCase()))
       : accountsWithPools;
 
-    if (targetAccounts.length > 0) {
+    if (targetAccounts.length > 1) {
       const distributedRows = [];
       for (const acc of targetAccounts) {
         const mapping = subagentMap.get(acc.prefix.toLowerCase());
@@ -347,13 +355,14 @@ export function renderScreen({
         }
       }
 
-      if (distributedRows.length > 0) {
+      if (distributedRows.length > 1) {
+        renderedMultiModel = true;
         const poolsStart = lines.length;
         const accountCountBadge = `${TEXT_DIM}${distributedRows.length} cuentas${RESET}`;
         lines.push(top(`${GOLD}SDD Multi-modelo${RESET} ${TEXT_DIM}·${RESET} ${accountCountBadge}`, collapsedCards.pools));
 
         if (!collapsedCards.pools) {
-          const poolGaugeCells = 8;
+          const poolGaugeCells = innerWidth >= 42 ? 8 : (innerWidth >= 36 ? 6 : 4);
           for (const rowItem of distributedRows) {
             const threshold = getQuotaThreshold(rowItem.percent);
             const shortPrefix = rowItem.prefix.length > 8 ? rowItem.prefix.slice(0, 7) + "…" : rowItem.prefix.padEnd(8);
@@ -393,10 +402,21 @@ export function renderScreen({
         cardLineBounds.push({ id: "pools", startLine: poolsStart, endLine: lines.length - 1 });
       }
     }
-  } else {
-    // ESCENARIO 2: SDD Mono-Modelo / Cuenta Dedicada
-    const targetActiveAccounts = accountsList.filter((a) => activePrefixes.has(a.prefix.toLowerCase()));
-    const poolCardsToShow = targetActiveAccounts.length > 0 ? targetActiveAccounts : (accountsList.slice(0, 1));
+  }
+
+  if (!renderedMultiModel) {
+    // ESCENARIO 2: SDD Mono-Modelo / Cuenta Dedicada (Antigravity Pools Detallados)
+    // Para orquestadores dedicados a una cuenta (ej: sdd-orchestrator-nina) o sesiones estándar,
+    // muestra el desglose completo de los 4 pools (Gemini Wk, Gemini 5h, Claude Wk, Claude 5h) de la cuenta en uso.
+    let poolCardsToShow = [];
+    if (resolvedLocalPrefix) {
+      const matched = accountsList.find((a) => a.prefix.toLowerCase() === resolvedLocalPrefix.toLowerCase());
+      if (matched) poolCardsToShow = [matched];
+    }
+    if (poolCardsToShow.length === 0) {
+      const targetActiveAccounts = accountsList.filter((a) => activePrefixes.has(a.prefix.toLowerCase()));
+      poolCardsToShow = targetActiveAccounts.length > 0 ? targetActiveAccounts : (accountsList.slice(0, 1));
+    }
     const cardTitlePrefix = isSddAgent ? "SDD Mono-modelo" : "Antigravity";
 
     for (const acc of poolCardsToShow) {
@@ -410,14 +430,14 @@ export function renderScreen({
             lines.push(row(`${AMBER}! ${acc.errorMsg}${RESET}`));
           }
 
-          const poolGaugeCells = 8;
+          const poolGaugeCells = 6;
           for (const p of acc.pools) {
             const threshold = getQuotaThreshold(p.percent);
             const pctFmt = `${BOLD}${threshold.color(String(p.percent).padStart(3) + "%")}${RESET}`;
             const bar = renderGaugeInline(p.percent, poolGaugeCells, threshold.color);
             const paceStr = p.pace ? `${p.pace.color}${p.pace.text}${RESET} ` : "";
             const resetStr = p.reset ? `${TEXT_DIM}${p.reset}${RESET}` : "";
-            const leftCol = `${threshold.color("●")} ${TEXT_PRIMARY}${p.label.padEnd(10)}${RESET} ${bar} ${pctFmt}`;
+            const leftCol = `${threshold.color("●")} ${TEXT_PRIMARY}${p.label.padEnd(9)}${RESET} ${bar} ${pctFmt}`;
             const rightCol = `${paceStr}${resetStr}`.trim();
             lines.push(row(leftCol, rightCol));
           }

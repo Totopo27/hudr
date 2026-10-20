@@ -61,20 +61,22 @@ export function resolveModelContextLimit(modelId, providerId = null) {
 // RESOLUCION DE PREFIJOS DE CUENTA (MULTI-MODEL / JSON COMPLIANT)
 // ============================================================================
 export function extractAccountPrefix(agentStr, modelStr, accountsList = []) {
-  // 1. Del agente (ej: sdd-orchestrator-xen1, sdd-apply-gianni, etc.)
+  // 1. Del agente (ej: sdd-orchestrator-xen1, sdd-apply-gianni, sdd-orchestrator-nina, etc.)
   if (agentStr) {
     const m = (agentStr || "").match(/sdd-[a-z0-9]+-([a-z0-9_-]+)/i);
     if (m?.[1]) return m[1].toLowerCase();
 
     const lowerAgent = agentStr.toLowerCase();
     for (const acc of accountsList) {
-      if (lowerAgent.includes(acc.prefix.toLowerCase())) {
-        return acc.prefix.toLowerCase();
+      const pfx = acc.prefix.toLowerCase();
+      const re = new RegExp(`(?:^|[_-])${pfx}(?:[_-]|$)`, "i");
+      if (re.test(lowerAgent) || lowerAgent.includes(`-${pfx}`) || lowerAgent.includes(`_${pfx}`)) {
+        return pfx;
       }
     }
   }
 
-  // 2. Del modelo (ej: {"id":"xen1/gemini-3.8-flash-high"}, "xen1/...", "cliproxy/xen1/...")
+  // 2. Del modelo (ej: {"id":"nina/gemini-3.8-flash-high"}, "cliproxy/nina/...", "nina/...")
   if (modelStr) {
     let modelId = String(modelStr);
     try {
@@ -82,8 +84,9 @@ export function extractAccountPrefix(agentStr, modelStr, accountsList = []) {
       if (parsed.id) modelId = parsed.id;
     } catch {}
 
-    const lowerModel = modelId.toLowerCase();
-    const mMod = lowerModel.match(/(?:^|[/"'\\\\])([a-z0-9_-]+)\/(?:gemini|claude|antigravity|[a-z0-9.-]+)/i);
+    const cleanModel = modelId.toLowerCase().replace(/^(?:cliproxy|opencode)\//i, "");
+
+    const mMod = cleanModel.match(/(?:^|[/"'\\\\])([a-z0-9_-]+)\/(?:gemini|claude|antigravity|[a-z0-9.-]+)/i);
     if (mMod?.[1]) {
       const candidate = mMod[1].toLowerCase();
       if (candidate !== "cliproxy" && candidate !== "opencode") {
@@ -94,7 +97,7 @@ export function extractAccountPrefix(agentStr, modelStr, accountsList = []) {
     for (const acc of accountsList) {
       const pfx = acc.prefix.toLowerCase();
       const re = new RegExp(`(?:^|[/"'\\\\])${pfx}(?:[/_-]|$)`, "i");
-      if (re.test(lowerModel)) {
+      if (re.test(cleanModel) || re.test(modelId.toLowerCase())) {
         return pfx;
       }
     }
@@ -196,7 +199,7 @@ export function resolveOpencodeConfig(targetDir) {
   return null;
 }
 
-export function getSddSubagentAccountMap(orchestratorAgent, targetDir) {
+export function getSddSubagentAccountMap(orchestratorAgent, targetDir, localPrefix = null) {
   const accountModelMap = new Map(); // prefix -> { family, model, phase }
   if (!orchestratorAgent) return accountModelMap;
 
@@ -239,7 +242,7 @@ export function getSddSubagentAccountMap(orchestratorAgent, targetDir) {
 
   // 2. Mapeo por sufijo de subagentes en opencode.json
   const m = orchestratorAgent.match(/sdd-orchestrator-(.+)/i);
-  const profile = m ? m[1].toLowerCase() : "";
+  const profile = m ? m[1].toLowerCase() : (localPrefix ? localPrefix.toLowerCase() : "");
 
   const agentSections = [];
   if (cfg.agent && typeof cfg.agent === "object") agentSections.push(cfg.agent);
@@ -250,7 +253,7 @@ export function getSddSubagentAccountMap(orchestratorAgent, targetDir) {
       const lowerName = name.toLowerCase();
       const isMatch = profile
         ? lowerName.startsWith("sdd-") && lowerName.endsWith(`-${profile}`) && !lowerName.includes("orchestrator")
-        : lowerName.startsWith("sdd-") && !lowerName.includes("orchestrator");
+        : lowerName.startsWith("sdd-") && !lowerName.includes("orchestrator") && !lowerName.match(/sdd-[a-z0-9]+-[a-z0-9_-]+/i);
 
       if (isMatch && def?.model) {
         let modelStr = typeof def.model === "string" ? def.model : (def.model.id || "");
@@ -292,6 +295,7 @@ export function getOpenCodeSessionData({ cwd = process.cwd(), accountsList = [],
     agent: "sdd-orchestrator",
     model: "gemini-3.8-flash-high",
     modelShort: "gemini-3.8-flash-high",
+    localPrefix: null,
     tokensInput: 0,
     tokensOutput: 0,
     activeTurnContextTokens: 0,
@@ -378,6 +382,7 @@ export function getOpenCodeSessionData({ cwd = process.cwd(), accountsList = [],
       // Asegurar que la cuenta del espacio local SIEMPRE esté registrada como activa
       const localPfx = extractAccountPrefix(targetSession.agent, targetSession.model, accountsList);
       if (localPfx) {
+        result.localPrefix = localPfx;
         result.allActivePrefixes.add(localPfx);
       }
 

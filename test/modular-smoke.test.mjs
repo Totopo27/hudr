@@ -156,6 +156,81 @@ try {
   assert.ok(renderOutput.includes("Contexto"));
   assert.ok(renderOutput.includes("Proyecto"));
   assert.ok(renderOutput.includes("Integraciones"));
+
+  // 12B. Test SDD Mono-modelo (nina) vs SDD Multi-modelo (claude-1)
+  const mockNinaAccounts = discovered.map((acc) => {
+    if (acc.prefix === "nina") {
+      return {
+        ...acc,
+        pools: [
+          { label: "Gemini Wk", percent: 100, pace: { color: "", text: "↑10%" }, reset: "en 6d 7h" },
+          { label: "Gemini 5h", percent: 100, pace: { color: "", text: "~0%" }, reset: "en 4h 59m" },
+          { label: "Claude Wk", percent: 100, pace: { color: "", text: "~0%" }, reset: "en 6d 23h" },
+          { label: "Claude 5h", percent: 100, pace: { color: "", text: "~0%" }, reset: "en 4h 59m" },
+        ],
+      };
+    }
+    return acc;
+  });
+
+  renderOutput = "";
+  renderer.renderScreen({
+    cols: 46,
+    rows: 40,
+    collapsedCards: config.DEFAULT_COLLAPSED_CARDS,
+    scrollOffset: 0,
+    accountsList: mockNinaAccounts,
+    opencode: {
+      agent: "sdd-orchestrator-nina",
+      model: "cliproxy/nina/gemini-3.8-flash-high",
+      modelShort: "gemini-3.8-flash-high",
+      localPrefix: "nina",
+      allActivePrefixes: new Set(["clas", "gianni", "nina", "portafolio"]),
+      attributedChanges: { files: new Set() },
+    },
+    git: gitData,
+    engram: engramData,
+    mcpList,
+    projectTreeData: treeData,
+    targetDir: process.cwd(),
+  });
+  assert.ok(renderOutput.includes("SDD Mono-modelo"), "Must render SDD Mono-modelo for nina");
+  assert.ok(renderOutput.includes("nina"), "Must reference nina account");
+  assert.ok(renderOutput.includes("Gemini Wk"), "Must contain Gemini Wk pool");
+  assert.ok(renderOutput.includes("Claude 5h"), "Must contain Claude 5h pool");
+  assert.ok(!renderOutput.includes("SDD Multi-modelo"), "Must NOT render SDD Multi-modelo for nina");
+
+  // Multi-modelo check for claude-1
+  const mockAllPools = discovered.map((acc) => ({
+    ...acc,
+    pools: [
+      { label: "Claude 5h", percent: 100, pace: { color: "", text: "~0%" }, reset: "en 4h 59m" },
+    ],
+  }));
+
+  renderOutput = "";
+  renderer.renderScreen({
+    cols: 46,
+    rows: 40,
+    collapsedCards: config.DEFAULT_COLLAPSED_CARDS,
+    scrollOffset: 0,
+    accountsList: mockAllPools,
+    opencode: {
+      agent: "sdd-orchestrator-claude-1",
+      model: "cliproxy/claude-opus-4-6-thinking",
+      modelShort: "claude-opus-4-6-thinking",
+      localPrefix: null,
+      allActivePrefixes: new Set(["clas", "gianni", "nina", "portafolio"]),
+      attributedChanges: { files: new Set() },
+    },
+    git: gitData,
+    engram: engramData,
+    mcpList,
+    projectTreeData: treeData,
+    targetDir: process.cwd(),
+  });
+  assert.ok(renderOutput.includes("SDD Multi-modelo"), "Must render SDD Multi-modelo for claude-1");
+  assert.ok(renderOutput.includes("cuentas"), "Must include cuentas badge");
 } finally {
   process.stdout.write = origWrite;
 }
