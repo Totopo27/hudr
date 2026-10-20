@@ -3,3 +3,16 @@ node_modules/
 Thumbs.db
 *.log
 .atl/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Process artifacts, drafts and dossiers
+*NAMING*
+*naming*
+*DOSSIER*
+*dossier*
+*.tmp
+
